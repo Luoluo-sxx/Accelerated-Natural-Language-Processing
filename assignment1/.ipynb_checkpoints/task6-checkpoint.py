@@ -1,0 +1,280 @@
+{
+ "cells": [
+  {
+   "cell_type": "code",
+   "execution_count": 42,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import re\n",
+    "import sys\n",
+    "import numpy as np\n",
+    "from random import random\n",
+    "from math import log\n",
+    "from collections import defaultdict"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 43,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "\n",
+    "infile_en = 'data/training.en'\n",
+    "infile_de = 'data/training.de'\n",
+    "infile_es = 'data/training.es'\n",
+    "infile_mo = 'data/model-br.en'\n",
+    "infile_test = 'data/test'"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 58,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# to generate a set which consists the courpus\n",
+    "option =  set(chr(i) for i in range(97,123))\n",
+    "option =  option|{\" \",\".\",\"#\",\"0\"}\n",
+    "\n",
+    "full = set()\n",
+    "for i in option:\n",
+    "    for j in option:\n",
+    "        full = full|{i+j}\n",
+    "full = full -{\"##\"}"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 59,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def preprocess_line(line):\n",
+    "        alpha = set(chr(i) for i in range(97,123))|set(chr(i) for i in range(65,91))\n",
+    "        res = \"\"\n",
+    "        for i in line.lower().rstrip(\"\\n\"): #there are \"\\n\" in every end of the sentence\n",
+    "            if i in alpha:\n",
+    "                res += i\n",
+    "            elif i.isspace():\n",
+    "                res += i\n",
+    "            elif i.isdigit():\n",
+    "                res += \"0\"\n",
+    "            elif i == \".\":\n",
+    "                res += i\n",
+    "        return res\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 60,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def generate_LM(infile, full):    \n",
+    "    bi_counts = defaultdict(list)\n",
+    "    hi_counts = defaultdict(list)\n",
+    "    with open(infile) as f:\n",
+    "        for line in f:\n",
+    "            #print(line)\n",
+    "            line = preprocess_line(line)\n",
+    "            line = \"#\"+line+\"#\"    #add the marks of beginning and end \n",
+    "            #print(line)\n",
+    "            for j in range(len(line)-(1)):\n",
+    "                bigram = line[j:j+2]\n",
+    "                hi = bigram[:1]\n",
+    "                try:\n",
+    "                    hi_counts[hi][0] += 1\n",
+    "                except:\n",
+    "                    hi_counts[hi].append(1)\n",
+    "                try:\n",
+    "                    bi_counts[bigram][0] += 1\n",
+    "                except:\n",
+    "                    bi_counts[bigram].append(1.005)\n",
+    "                    hi_counts[hi][0] += 0.005\n",
+    "                    bi_counts[bigram].append(hi)\n",
+    "                    hi_counts[hi].append(bigram)\n",
+    "            \n",
+    "                full = full- {bigram}\n",
+    "    #start to do the process of smooth\n",
+    "    for bigram in full:\n",
+    "        hi = bigram[:1]\n",
+    "        try:\n",
+    "            hi_counts[hi][0] += 0.005\n",
+    "        except:\n",
+    "            hi_counts[hi].append(0.005)\n",
+    "        \n",
+    "        bi_counts[bigram].append(0.005)\n",
+    "        bi_counts[bigram].append(hi)\n",
+    "        hi_counts[hi].append(bigram)\n",
+    "    \"\"\"\n",
+    "    we generate two dict in collaboration to restore the counts and distribution of our language model\n",
+    "    \n",
+    "    Dict1: bi_counts = {\"bigram\" : [counts_in_text, two_c_hist, condition_probability]} \n",
+    "    Dict2: hi_counts = {\"c_hist\" : [counts_in_trigram, gram_in_corpus_begin_with_his]} \n",
+    "    \n",
+    "    \"\"\"\n",
+    "    for s in sorted(bi_counts.keys()):\n",
+    "        bi_counts[s].append(bi_counts[s][0]/hi_counts[bi_counts[s][1]][0])\n",
+    "    return bi_counts,hi_counts"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 61,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "\n",
+    "bi_en_counts,hi_en_counts = generate_LM(infile_en, full)\n",
+    "bi_de_counts,hi_de_counts = generate_LM(infile_de, full)\n",
+    "bi_es_counts,hi_es_counts = generate_LM(infile_es, full)\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 62,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "\n",
+    "def generate_from_LM(bi_counts, hi_counts):\n",
+    "    key = \"#\"\n",
+    "    para = key\n",
+    "    i = 0\n",
+    "    while i < 300:\n",
+    "        opt = list(hi_counts[key][1:])\n",
+    "        prob = list(bi_counts[key][2] for key in opt)\n",
+    "        bins = np.cumsum(prob)\n",
+    "        choose = np.digitize(np.random.rand(1), bins)\n",
+    "        key = opt[choose[0]]\n",
+    "        i +=1\n",
+    "        if key[1] == \"#\":\n",
+    "            para += \"\\n\"\n",
+    "            para += \"#\"\n",
+    "            i -= 1    \n",
+    "        para += key[1]\n",
+    "        key = key[1:]\n",
+    "    res =\"\"\n",
+    "    for c in para:\n",
+    "        if c != \"#\":\n",
+    "            res += c\n",
+    "    return res"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 63,
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "amund dofay othannciand o tstreseeroll th metuscan qur ic oumakncon therl perithins aindalathikefurony anotouirund s trthe t is ges raty ctisecommaton omatiom an io opon iril dmpres tirncoffeeeemrawon ericucotucathens atount thoonivayenstshem gres nenthe hale ideralartlver ounay eldsonino te in oun \n"
+     ]
+    }
+   ],
+   "source": [
+    "para_1 = generate_from_LM(bi_en_counts, hi_en_counts)\n",
+    "print(para_1)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 64,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def calculate_perp(infile_test, bi_counts):\n",
+    "    logsum = 0\n",
+    "    with open(infile_test) as f:\n",
+    "        sum_t = 0\n",
+    "        for line in f:\n",
+    "            line = preprocess_line(line) \n",
+    "            line = \"#\"+line+\"#\"\n",
+    "            sum_t += (len(line)-1)\n",
+    "            for i in range(len(line)-(1)):\n",
+    "                bi = line[i:i+2]\n",
+    "                logsum += log(bi_counts[bi][2],2)\n",
+    "           \n",
+    "    N = sum_t\n",
+    "    print(N)\n",
+    "    #print(prob)\n",
+    "    perp = pow(2,-1/N * logsum)\n",
+    "    print(perp)\n",
+    "    return perp\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 66,
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "13553\n",
+      "11.475353772208646\n",
+      "13553\n",
+      "21.9541154698943\n",
+      "13553\n",
+      "27.289234432363397\n"
+     ]
+    },
+    {
+     "data": {
+      "text/plain": [
+       "27.289234432363397"
+      ]
+     },
+     "execution_count": 66,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "calculate_perp(infile_test, bi_en_counts)\n",
+    "calculate_perp(infile_test, bi_de_counts)\n",
+    "calculate_perp(infile_test, bi_es_counts)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.4.9"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 2
+}
